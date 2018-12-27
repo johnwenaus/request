@@ -40,6 +40,49 @@ var globalCookieJar = cookies.jar()
 
 var globalPool = {}
 
+function getTimingPhases(input) {
+  if (input.timing) {
+    input.timings.end = now() - input.startTimeNow
+
+    // fill in the blanks for any periods that didn't trigger, such as
+    // no lookup or connect due to keep alive
+    if (!input.timings.socket) {
+      input.timings.socket = 0
+    }
+    if (!input.timings.lookup) {
+      input.timings.lookup = input.timings.socket
+    }
+    if (!input.timings.connect) {
+      input.timings.connect = input.timings.lookup
+    }
+    if (!input.timings.response) {
+      input.timings.response = input.timings.connect
+    }
+
+    debug('elapsed time', input.timings.end)
+
+    // elapsedTime includes all redirects
+    input.elapsedTime += Math.round(input.timings.end)
+
+    // pre-calculate phase timings as well
+    let timingPhases = {
+      wait: input.timings.socket,
+      dns: input.timings.lookup - input.timings.socket,
+      tcp: input.timings.connect - input.timings.lookup,
+      firstByte: input.timings.response - input.timings.connect,
+      download: input.timings.end - input.timings.response,
+      total: input.timings.end,
+      extra: {
+        timingStart: input.startTime,
+        elapsedTime: input.elapsedTime,
+        timings: input.timings
+      }
+    }
+
+    return timingPhases;
+  }
+}
+
 function filterForNonReserved (reserved, options) {
   // Filter out properties that are not reserved.
   // Reserved values are passed in at call site.
@@ -816,6 +859,7 @@ Request.prototype.start = function () {
           var e = new Error('ESOCKETTIMEDOUT')
           e.code = 'ESOCKETTIMEDOUT'
           e.connect = false
+          e.timingPhases = getTimingPhases(self)
           self.emit('error', e)
         }
       })
@@ -848,6 +892,7 @@ Request.prototype.start = function () {
           var e = new Error('ETIMEDOUT')
           e.code = 'ETIMEDOUT'
           e.connect = true
+          e.timingPhases = getTimingPhases(self)
           self.emit('error', e)
         }, timeout)
       } else {
